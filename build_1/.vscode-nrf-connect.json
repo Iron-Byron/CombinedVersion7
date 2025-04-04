@@ -1,0 +1,21 @@
+{
+  "toolchainPath": "c:\\ncs\\toolchains\\cf2149caf2",
+  "sdkPath": "c:\\ncs\\v2.6.1",
+  "board": "nrf52dk_nrf52832",
+  "boardDirs": [
+    "c:/ncs/v2.6.1/zephyr/boards/arm/nrf52dk_nrf52832"
+  ],
+  "boardRevision": "",
+  "boardDir": "c:/ncs/v2.6.1/zephyr/boards/arm/nrf52dk_nrf52832",
+  "shouldBuild": true,
+  "optimizations": "none",
+  "cmakeArgs": [],
+  "confFiles": [
+    "prj.conf"
+  ],
+  "buildDirectory": "..\\Combined_BLE_gatt7\\build_1",
+  "kconfigFragments": [],
+  "snippets": [],
+  "dtcOverlays": [],
+  "extraDtcOverlays": []
+}
