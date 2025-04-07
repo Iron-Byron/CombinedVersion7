@@ -31,7 +31,7 @@
 #include <math.h>
 
 /* DEFINE THE TYPE OF PROBE BELOW 'BigProbe' = The Large Probe, any other spelling is the small probe */
-#define BigProbe
+#define BigProb
 /* DEFINE THE TYPE OF PROBE BELOW 'BigProbe' = The Large Probe, any other spelling is the small probe */
 #define NVS_PARTITION		storage_partition
 #define NVS_PARTITION_DEVICE	FIXED_PARTITION_DEVICE(NVS_PARTITION)
@@ -136,6 +136,7 @@ void calibrate_timer_handler(struct k_timer *timer_id);
 void print_stored_calibration_data(void);
 void clear_calibration_data(void);
 void enable_calibratetimer(void);
+void disable_one_sec_window_timer(void);
 
 K_TIMER_DEFINE(boot_timer, boot_timer_handler, NULL);
 K_TIMER_DEFINE(advertise_timer, advertise_timer_handler, NULL);
@@ -156,7 +157,7 @@ static uint8_t command_buf[20]; // Buffer for receiving GATT commands
 
 // Thermistor parameters
 #define R_FIXED 1000.0               // 1kΩ fixed resistor
-#define BETA 3950.0                  // Beta coefficient of the NTC thermistor
+#define BETA 4450//3950.0                  // Beta coefficient of the NTC thermistor
 #define R_0 1000.0                    // Thermistor resistance at 25°C (1kΩ)
 #define T_0 298.15                   // Temperature in Kelvin at 25°C
 
@@ -459,11 +460,7 @@ static void PPI_GPIOE_assign_pin(uint32_t pin)
 // Timer handler function
 void one_sec_window_timer_handler(struct k_timer *timer_id)
 {
-    // nrf_gpio_pin_set(DirPIN7);
-    // printk("One Sec kTimer Triggered!\n");
-    // nrf_gpio_pin_clear(DirPIN7);
     disable_one_sec_window_timer();
-    // nrf_gpio_pin_clear(PwrEnable1PIN17);//Just for testing the calibrate timer
     one_sec_window_active=false;
     start_one_sec_counter_timer=true;
 }
@@ -594,32 +591,95 @@ void ADC_init_funct(int ADCIndex, struct adc_sequence *sequence)
 	}
 }
 
-void ADC_Get_reading(int ADCIndex, struct adc_sequence *sequence)
+// void ADC_Get_reading(int ADCIndex, struct adc_sequence *sequence)
+// {
+// 	int err;
+// 	err = adc_read(adc_channels[ADCIndex].dev, sequence);
+// 	if (err < 0) {
+// 		// printk("Could not read (%d)", err);
+// 	}
+
+
+// 	int16_t *buf = (int16_t *)sequence->buffer; // Cast buffer pointer to int16_t
+
+// 	// Print raw ADC value
+//     // printk("ADC reading: %s, channel %d: Raw value = %d", 
+//     //         adc_channels[ADCIndex].dev->name, 
+//     //         adc_channels[ADCIndex].channel_id, 
+//     //         *buf);
+
+//     // Convert the raw value to millivolts
+//     int val_mv = *buf;
+//     err = adc_raw_to_millivolts_dt(&adc_channels[ADCIndex], &val_mv);
+//     if (err < 0) {
+//         // printk("Conversion to mV not available for channel #%d", ADCIndex);
+//     } else {
+//         // printk("Converted value = %d mV\n", val_mv);
+//     }
+//     AvgTemperature+=val_mv;
+// }
+
+#define NUM_ADC_SAMPLES 6
+
+int adc_readings_mv[NUM_ADC_SAMPLES];
+int adc_sample_count = 0;
+
+void ADC_Get_reading(int ADCIndex, struct adc_sequence *sequence)//experimental
 {
-	int err;
-	err = adc_read(adc_channels[ADCIndex].dev, sequence);
-	if (err < 0) {
-		// printk("Could not read (%d)", err);
-	}
+    // nrf_gpio_pin_set(DirPIN7);
+    int err = adc_read(adc_channels[ADCIndex].dev, sequence);
+    if (err < 0) {
+        printk("ADC read failed on channel %d (err: %d)\n", ADCIndex, err);
+        return;
+    }
 
-
-	int16_t *buf = (int16_t *)sequence->buffer; // Cast buffer pointer to int16_t
-
-	// Print raw ADC value
-    // printk("ADC reading: %s, channel %d: Raw value = %d", 
-    //         adc_channels[ADCIndex].dev->name, 
-    //         adc_channels[ADCIndex].channel_id, 
-    //         *buf);
-
-    // Convert the raw value to millivolts
+    int16_t *buf = (int16_t *)sequence->buffer;
     int val_mv = *buf;
+
     err = adc_raw_to_millivolts_dt(&adc_channels[ADCIndex], &val_mv);
     if (err < 0) {
-        // printk("Conversion to mV not available for channel #%d", ADCIndex);
-    } else {
-        // printk("Converted value = %d mV\n", val_mv);
+        printk("Conversion to mV failed on channel %d (err: %d)\n", ADCIndex, err);
+        return;
     }
-    AvgTemperature+=val_mv;
+
+    if (adc_sample_count < NUM_ADC_SAMPLES) {
+        adc_readings_mv[adc_sample_count++] = val_mv;
+        // printk("ADC Sample %d = %d mV\n", adc_sample_count, val_mv);
+    }
+    // nrf_gpio_pin_clear(DirPIN7);
+}
+
+int calculate_filtered_average(void) /////experimental
+{
+    if (adc_sample_count < NUM_ADC_SAMPLES) {
+        // printk("Not enough samples collected yet: %d/%d\n", adc_sample_count, NUM_ADC_SAMPLES);
+        return -1;
+    }
+
+    int min = adc_readings_mv[0];
+    int max = adc_readings_mv[0];
+    int sum = adc_readings_mv[0];
+
+    // printk("ADC readings: ");
+    // printk("[");
+    for (int i = 1; i < NUM_ADC_SAMPLES; i++) {
+        int val = adc_readings_mv[i];
+        // printk("%d", val);
+        // if (i < NUM_ADC_SAMPLES - 1) printk(", ");
+
+        if (val < min) min = val;
+        if (val > max) max = val;
+        sum += val;
+    }
+    // printk("]\n");
+
+    int adjusted_sum = sum - min - max;
+    int avg = adjusted_sum / (NUM_ADC_SAMPLES - 2);
+
+    // printk("Min: %d, Max: %d, Adjusted Sum: %d, Average: %d mV\n", min, max, adjusted_sum, avg);
+
+    adc_sample_count = 0; // reset after calculation
+    return avg;
 }
 
 // Configure GPIO pins as outputs with pull-down resistors
@@ -665,7 +725,7 @@ static const struct bt_data adman[] = {
 #define DIE_TEMP_NODE DT_ALIAS(die_temp)
 /* Get the single sensor device */
 static const struct device *sensor_dev = DEVICE_DT_GET(DIE_TEMP_NODE);
-static int die_temperature_scaled = 0;
+volatile int die_temperature_scaled = 0;
 static uint16_t temp_high;  // Upper 2 bytes
 static uint16_t temp_low;   // Lower 2 bytes
 
@@ -696,28 +756,18 @@ static int print_die_temperature(void)
 void take_readings(struct adc_sequence *sequence)
 {
     #ifdef BigProbe
-    nrf_gpio_pin_set(DirPIN7);
-    printk("Went into take readings function\n");
-    
-
     TIMERhandlercounter=0;
     loopCnt=0;
     arrayIndex=0;
-    AvgCount = 0;  // Ensure counter values don't accumulate
+    AvgCount = 0; 
     AvgTemperature = 0;
     nrf_gpio_pin_set(pwr_pins[arrayIndex]);
     temperature_measure_required=true;
     one_sec_window_active=true;
     enable_one_sec_window_timer();
     PPI_GPIOE_assign_pin(count_pins[arrayIndex]);
-    printk("arrayIndex: %d\n", arrayIndex);
-    printk("ADC Dev ready: %d\n", adc_is_ready_dt(&adc_channels[arrayIndex]));
     ADC_init_funct(arrayIndex,sequence);
-
     start_one_sec_counter_timer = false;//Not sure if necessary 
-    printk("Problem not in here\n");
-    nrf_gpio_pin_clear(DirPIN7);
-
     #else
     hfclk_start();//Must start the HFXCLK to get accurate internal temperature readings
     TIMERhandlercounter=0;
@@ -728,9 +778,10 @@ void take_readings(struct adc_sequence *sequence)
     nrf_gpio_pin_set(spPwrEnable1PIN4);
     nrf_gpio_pin_set(pwr_pins[arrayIndex]);
     nrf_gpio_pin_set(pwr_pins[5]);
-    nrfx_timer_clear(&my_counter);
-    // enable_readtimer();
-    nrfx_timer_enable(&timer_1000ms);//experimental
+    temperature_measure_required=true;
+    one_sec_window_active=true;
+    enable_one_sec_window_timer();
+    start_one_sec_counter_timer = false;//Not sure if necessary 
     #endif
 }
 
@@ -1200,9 +1251,6 @@ int main(void)
     // save_calibration_data(81, 195, 133, "GE000004"); //JUST FOR TESTING
     // nrf_gpio_pin_clear(DirPIN7);
 
-    // 
-    
-
     timer_init();
     nrfx_timer_enable(&my_counter);
 	PPI_GPIOE_init();
@@ -1219,21 +1267,15 @@ int main(void)
     nrf_gpio_pin_set(pwr_pins[5]);
     PPI_GPIOE_assign_pin(count_pins[0]);
     ADC_init_funct(5,&sequence);
-    nrfx_timer_clear(&my_counter);
-    // enable_readtimer();
-    nrfx_timer_enable(&timer_1000ms);//experimental
+    temperature_measure_required=true;
+    one_sec_window_active=true;
+    enable_one_sec_window_timer();
     #endif
-    // nrfx_timer_clear(&my_counter);
-    // enable_readtimer();
-    // nrfx_timer_enable(&timer_1000ms);//experimental
 
 	while (1) {
         if(start_one_sec_counter_timer&&!temperature_measure_required)
         {
             start_one_sec_counter_timer=false;
-            nrf_gpio_pin_set(DirPIN7);
-            printk("Went inside here\n");
-            nrf_gpio_pin_clear(DirPIN7);
             nrfx_timer_clear(&my_counter);
             #ifdef BigProbe 
             if(loopCnt<=5)
@@ -1241,48 +1283,29 @@ int main(void)
             if(loopCnt<=0) 
             #endif
             {               
-                // printk("Went inside here :D\n");
                 nrfx_timer_enable(&timer_1000ms);
             }
         }
         if(temperature_measure_required&&one_sec_window_active)
         {
-            k_msleep(5);
-            // disable_one_sec_window_timer();
-            nrf_gpio_pin_set(DirPIN7);
             #ifdef BigProbe
-            for(int i=0;i<5;i++){
-                // printk("AM inside the for loop\n");
+            k_msleep(5);
+            for(int i=0;i<6;i++)
+            {
                 ADC_Get_reading(arrayIndex,&sequence);
                 k_msleep(20);
             }
+            temperature[arrayIndex]=calculate_filtered_average();
             #else
-            ADC_Get_reading(5,&sequence);
-            print_die_temperature();
-            #endif
-            temperature_measure_required=false;
-            printk("10\n");
-            // start_one_sec_counter_timer=true;
-            nrf_gpio_pin_clear(DirPIN7);
-        }
-        if(timesup&&!readbatt)
-        {   
-            nrf_gpio_pin_set(DirPIN7);
-            printk("Went into counter loop\n");
-            nrfx_timer_disable(&timer_1000ms);//experimental
-            timesup=false;
-            uint32_t counter_val = nrfx_timer_capture(&my_counter, NRF_TIMER_CC_CHANNEL0);
-            AvgCount+=counter_val;
-            // nrf_gpio_pin_set(DirPIN7);
-            loopCnt++;
-            temperature[arrayIndex]=AvgTemperature/5;//AvgTemperature/5;
-            Counts[arrayIndex]=AvgCount;//10*(AvgCount/5);
-            AvgCount=0;
-            AvgTemperature=0;
-            TIMERhandlercounter=0;
-            #ifdef BigProbe
-            #else
-            internalTEMP=die_temperature_scaled;
+            // hfclk_start(); //Might not need this here
+            for(int i=0;i<6;i++)
+            {
+                ADC_Get_reading(5,&sequence);
+                print_die_temperature();
+                k_msleep(20);
+            }
+            temperature[arrayIndex]=calculate_filtered_average();
+            internalTEMP=die_temperature_scaled/6;
             die_temperature_scaled=0;
             printk("Internal Temperature average: %d°C\n",internalTEMP);
             temp_high = (internalTEMP >> 8) & 0xFF;  // Upper 2 bytes
@@ -1290,6 +1313,30 @@ int main(void)
             printk("Stored as HEX: temp_high=0x%02X, temp_low=0x%02X\n", temp_high, temp_low);
             voltage22 = (uint16_t)(temperature[arrayIndex]/20);   
             printk("Voltage /20: %d\n",voltage22);
+            #endif
+            temperature_measure_required=false;
+        }
+        if(timesup&&!readbatt)
+        {   
+            nrfx_timer_disable(&timer_1000ms);
+            timesup=false;
+            uint32_t counter_val = nrfx_timer_capture(&my_counter, NRF_TIMER_CC_CHANNEL0);
+            AvgCount+=counter_val;
+            loopCnt++;
+            Counts[arrayIndex]=AvgCount;
+            AvgCount=0;
+            AvgTemperature=0;
+            TIMERhandlercounter=0;
+            #ifdef BigProbe
+            #else
+            // internalTEMP=die_temperature_scaled;
+            // die_temperature_scaled=0;
+            // printk("Internal Temperature average: %d°C\n",internalTEMP);
+            // temp_high = (internalTEMP >> 8) & 0xFF;  // Upper 2 bytes
+            // temp_low  = internalTEMP & 0xFF;         // Lower 2 bytes
+            // printk("Stored as HEX: temp_high=0x%02X, temp_low=0x%02X\n", temp_high, temp_low);
+            // voltage22 = (uint16_t)(temperature[arrayIndex]/20);   
+            // printk("Voltage /20: %d\n",voltage22);
             #endif
             // printk("Counter %d average: %d\n",arrayIndex+1, Counts[arrayIndex]);
             // printk("Voltage %d average: %d\n",arrayIndex+1, temperature[arrayIndex]);
@@ -1319,16 +1366,6 @@ int main(void)
                 }
             }
             #endif
-            // nrfx_timer_clear(&my_counter);
-            // #ifdef BigProbe 
-            // if(loopCnt<=5)
-            // #else 
-            // if(loopCnt<=0) 
-            // #endif
-            // {               
-            //     // enable_readtimer();
-            //     nrfx_timer_enable(&timer_1000ms);//experimental
-            // }
             if(loopCnt>5)
             {
                 #ifdef BigProbe
@@ -1338,10 +1375,10 @@ int main(void)
                 nrf_gpio_pin_clear(PwrEnable6PIN19);
                 for(int i=0; i<6;i++)
                 {
-                nrf_gpio_pin_set(DirPIN7);
-                printk("Array %d Counter average: %d\n",i, Counts[i]);
-                printk("Array %d Voltage average: %d\n",i, temperature[i]);
-                nrf_gpio_pin_clear(DirPIN7);
+                // nrf_gpio_pin_set(DirPIN7);
+                // printk("Array %d Counter average: %d\n",i, Counts[i]);
+                // printk("Array %d Voltage average: %d\n",i, temperature[i]);
+                // nrf_gpio_pin_clear(DirPIN7);
                 }
                 //Take battery voltage reading
                 readbatt=true;
@@ -1374,7 +1411,7 @@ int main(void)
 
             }
             #endif
-            nrf_gpio_pin_clear(DirPIN7);
+            // nrf_gpio_pin_clear(DirPIN7);
         }
         if(enableBoot)
         {
@@ -1389,7 +1426,7 @@ int main(void)
         }
         if(readbatt)
         {
-            nrf_gpio_pin_set(DirPIN7);
+            // nrf_gpio_pin_set(DirPIN7);
             // printk("readingvoltage\n ");
             ADC_Get_reading(6,&sequence);
             for(int i=0;i<10;i++){
@@ -1401,17 +1438,17 @@ int main(void)
             // loopCnt++;
             temperature[6]=AvgTemperature/10;
             AvgTemperature=0;
-            printk("Battery Voltage %d average: %d\n",7, temperature[6]);
+            // printk("Battery Voltage %d average: %d\n",7, temperature[6]);
             waitforRS =true;
             if(WetCalibration||DryCalibration)
             {
                 calibrateSaveReadingNVS=true;
             }
             // nrf_gpio_pin_set(DirPIN7);
-            calculate_moisture();
+            // calculate_moisture();
             calculate_temperature();
-            nrf_gpio_pin_clear(DirPIN7);
-            take_readings(&sequence); //////////////////////////////////////////Remove, just for testing//////////////////////////////////////
+            // nrf_gpio_pin_clear(DirPIN7);
+            // take_readings(&sequence); //////////////////////////////////////////Remove, just for testing//////////////////////////////////////
         }
         if(turnoffboot)
         {
